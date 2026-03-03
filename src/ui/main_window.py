@@ -104,6 +104,7 @@ def create_main_window(root, urls, hotkey_initial, handlers):
 	hotkey_capture_ref = {
 		'capturing': False,
 		'binding_id': None,
+		'pressed_mods': set(),
 	}
 
 	def create_card(parent):
@@ -147,22 +148,29 @@ def create_main_window(root, urls, hotkey_initial, handlers):
 		hotkey_btn_text.set(f'設定熱鍵（目前：{value}）')
 
 	def format_hotkey_from_event(event):
+		pressed_mods = hotkey_capture_ref.get('pressed_mods') or set()
 		modifiers = []
-		state = int(event.state)
-		if state & 0x0004:
+		if 'ctrl' in pressed_mods:
 			modifiers.append('ctrl')
-		if state & 0x0008:
+		if 'alt' in pressed_mods:
 			modifiers.append('alt')
 
-		key_name = str(event.keysym).lower()
+		key_name = str(event.keysym)
 		if key_name in {
-			'shift_l', 'shift_r',
-			'control_l', 'control_r',
-			'alt_l', 'alt_r',
-			'mode_switch', 'iso_level3_shift',
-			'meta_l', 'meta_r',
+			'Shift_L', 'Shift_R',
+			'Control_L', 'Control_R',
+			'Alt_L', 'Alt_R',
+			'Option_L', 'Option_R',
+			'Meta_L', 'Meta_R',
+			'Command',
 		}:
 			return ''
+
+		if key_name.lower().startswith('f') and key_name[1:].isdigit():
+			key_name = key_name.lower()
+		else:
+			key_name = key_name.lower()
+
 		if key_name == 'space':
 			key_name = 'space'
 		if key_name == 'escape':
@@ -181,10 +189,22 @@ def create_main_window(root, urls, hotkey_initial, handlers):
 			root.unbind('<KeyPress>', hotkey_capture_ref['binding_id'])
 		hotkey_capture_ref['capturing'] = False
 		hotkey_capture_ref['binding_id'] = None
+		hotkey_capture_ref['pressed_mods'].clear()
 		hotkey_hint_var.set('範例：ctrl+alt+t, f12, alt+q, ctrl+c')
 		record_hotkey_btn.config(state=tk.NORMAL)
 
 	def on_hotkey_keypress(event):
+		if not hotkey_capture_ref['capturing']:
+			return
+
+		keysym = str(event.keysym)
+		if keysym in {'Control_L', 'Control_R'}:
+			hotkey_capture_ref['pressed_mods'].add('ctrl')
+			return
+		if keysym in {'Alt_L', 'Alt_R', 'Option_L', 'Option_R'}:
+			hotkey_capture_ref['pressed_mods'].add('alt')
+			return
+
 		combo = format_hotkey_from_event(event)
 		if combo == '':
 			return
