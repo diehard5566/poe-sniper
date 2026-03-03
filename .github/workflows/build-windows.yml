@@ -3,8 +3,11 @@ name: Build Windows exe
 on:
   push:
     tags:
-      - 'v*'        # 打 v0.1.0、v0.1.1... 這種 tag 就會觸發
-  workflow_dispatch:  # 也可以手動在 Actions 頁面按下去跑
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -27,7 +30,7 @@ jobs:
 
       - name: Build exe
         run: |
-          pyinstaller --noconfirm --windowed --onefile --name "POE-Sniper" --collect-all selenium --collect-all webdriver_manager main.py
+          pyinstaller --noconfirm --windowed --onefile --name "POE-Sniper" --icon "assets/poe-sniper.ico" --collect-all selenium --collect-all webdriver_manager main.py
 
       - name: Zip artifact
         run: |
