@@ -3,7 +3,7 @@ name: Build Windows exe
 on:
   push:
     tags:
-      - 'v0.1.0'        # 你打 tag v0.1.0 之類就會觸發
+      - 'v*'        # 打 v0.1.0、v0.1.1... 這種 tag 就會觸發
   workflow_dispatch:  # 也可以手動在 Actions 頁面按下去跑
 
 jobs:
@@ -34,8 +34,16 @@ jobs:
           cd dist
           powershell Compress-Archive -Path POE-Sniper.exe -DestinationPath POE-Sniper-win.zip
 
-      - name: Upload artifact
+      - name: Upload artifact (for manual download)
         uses: actions/upload-artifact@v4
         with:
           name: POE-Sniper-win
           path: dist/POE-Sniper-win.zip
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/POE-Sniper-win.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
