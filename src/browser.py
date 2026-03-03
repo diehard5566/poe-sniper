@@ -15,19 +15,20 @@ def create_driver():
 	)
 	errors = []
 
-	try:
-		options = build_chrome_options('safe_port')
-		service = make_service_with_webdriver_manager(chrome_log_path)
-		return webdriver.Chrome(service=service, options=options)
-	except Exception as e1:
-		errors.append(f'profile=safe_port, service=webdriver_manager, error={e1}')
+	for profile in ('safe_port', 'minimal'):
+		try:
+			options = build_chrome_options(profile)
+			service = make_service_with_webdriver_manager(chrome_log_path)
+			return webdriver.Chrome(service=service, options=options)
+		except Exception as e1:
+			errors.append(f'profile={profile}, service=webdriver_manager, error={e1}')
 
-	try:
-		options = build_chrome_options('safe_port')
-		service = make_service_with_selenium_manager(chrome_log_path)
-		return webdriver.Chrome(service=service, options=options)
-	except Exception as e2:
-		errors.append(f'profile=safe_port, service=selenium_manager, error={e2}')
+		try:
+			options = build_chrome_options(profile)
+			service = make_service_with_selenium_manager(chrome_log_path)
+			return webdriver.Chrome(service=service, options=options)
+		except Exception as e2:
+			errors.append(f'profile={profile}, service=selenium_manager, error={e2}')
 
 	detail = '\n'.join(errors)
 	raise RuntimeError(f'Chrome 啟動失敗。\n{detail}\nChromeDriver log: {chrome_log_path}')
@@ -40,11 +41,9 @@ def build_chrome_options(profile='stable_pipe'):
 	options.add_argument('--no-default-browser-check')
 	options.add_argument('--disable-blink-features=AutomationControlled')
 
-	# 避免沿用使用者原本 profile 造成衝突（例如 profile lock）
-	user_data_dir = os.path.join(
-		tempfile.gettempdir(),
-		f"poe-sniper-profile-{int(time.time())}",
-	)
+	# 固定用專用 profile，與使用者平常的 Chrome 完全分開，不需關閉既有 Chrome。
+	# 重複使用同一目錄可避免每次啟動都跑「首次設定」，較穩定。
+	user_data_dir = os.path.join(tempfile.gettempdir(), 'poe-sniper-profile')
 	options.add_argument(f'--user-data-dir={user_data_dir}')
 
 	if profile == 'stable_pipe':
@@ -55,10 +54,16 @@ def build_chrome_options(profile='stable_pipe'):
 	elif profile == 'safe_port':
 		options.add_argument('--remote-allow-origins=*')
 		options.add_argument('--remote-debugging-port=0')
+		options.add_argument('--no-sandbox')
+		options.add_argument('--disable-dev-shm-usage')
 		options.add_argument('--disable-gpu')
+		options.add_argument('--disable-software-rasterizer')
 		options.add_argument('--disable-extensions')
 	elif profile == 'minimal':
-		pass
+		options.add_argument('--remote-allow-origins=*')
+		options.add_argument('--remote-debugging-port=0')
+		options.add_argument('--no-sandbox')
+		options.add_argument('--disable-dev-shm-usage')
 
 	options.add_experimental_option('excludeSwitches', ['enable-automation'])
 
