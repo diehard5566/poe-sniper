@@ -13,25 +13,21 @@ def create_driver():
 		tempfile.gettempdir(),
 		f"poe-sniper-chromedriver-{int(time.time())}.log",
 	)
-	option_profiles = [
-		'stable_pipe',
-		'safe_port',
-		'minimal',
-	]
-	service_factories = [
-		('webdriver_manager', make_service_with_webdriver_manager),
-		('selenium_manager', make_service_with_selenium_manager),
-	]
-
 	errors = []
-	for profile in option_profiles:
-		options = build_chrome_options(profile)
-		for service_name, service_factory in service_factories:
-			try:
-				service = service_factory(chrome_log_path)
-				return webdriver.Chrome(service=service, options=options)
-			except Exception as e:
-				errors.append(f'profile={profile}, service={service_name}, error={e}')
+
+	try:
+		options = build_chrome_options('safe_port')
+		service = make_service_with_webdriver_manager(chrome_log_path)
+		return webdriver.Chrome(service=service, options=options)
+	except Exception as e1:
+		errors.append(f'profile=safe_port, service=webdriver_manager, error={e1}')
+
+	try:
+		options = build_chrome_options('safe_port')
+		service = make_service_with_selenium_manager(chrome_log_path)
+		return webdriver.Chrome(service=service, options=options)
+	except Exception as e2:
+		errors.append(f'profile=safe_port, service=selenium_manager, error={e2}')
 
 	detail = '\n'.join(errors)
 	raise RuntimeError(f'Chrome 啟動失敗。\n{detail}\nChromeDriver log: {chrome_log_path}')

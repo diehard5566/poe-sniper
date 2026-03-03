@@ -153,8 +153,6 @@ def create_main_window(root, urls, hotkey_initial, handlers):
 			modifiers.append('ctrl')
 		if state & 0x0008:
 			modifiers.append('alt')
-		if state & 0x0001:
-			modifiers.append('shift')
 
 		key_name = str(event.keysym).lower()
 		if key_name in {
@@ -169,6 +167,8 @@ def create_main_window(root, urls, hotkey_initial, handlers):
 			key_name = 'space'
 		if key_name == 'escape':
 			key_name = 'esc'
+		if key_name == 'grave':
+			key_name = '`'
 		if key_name.startswith('kp_'):
 			key_name = key_name.replace('kp_', 'num')
 
@@ -181,7 +181,7 @@ def create_main_window(root, urls, hotkey_initial, handlers):
 			root.unbind('<KeyPress>', hotkey_capture_ref['binding_id'])
 		hotkey_capture_ref['capturing'] = False
 		hotkey_capture_ref['binding_id'] = None
-		hotkey_hint_var.set('範例：ctrl+alt+t, f12, shift+z')
+		hotkey_hint_var.set('範例：ctrl+alt+t, f12, alt+q, ctrl+c')
 		record_hotkey_btn.config(state=tk.NORMAL)
 
 	def on_hotkey_keypress(event):
@@ -402,7 +402,7 @@ def create_main_window(root, urls, hotkey_initial, handlers):
 		style='Accent.TButton',
 	)
 	record_hotkey_btn.pack(fill=tk.X, pady=(8, 4))
-	hotkey_hint_var = tk.StringVar(value='範例：ctrl+alt+t, f12, shift+z')
+	hotkey_hint_var = tk.StringVar(value='範例：ctrl+alt+t, f12, alt+q, ctrl+c')
 	tk.Label(
 		hotkey_inner,
 		textvariable=hotkey_hint_var,
