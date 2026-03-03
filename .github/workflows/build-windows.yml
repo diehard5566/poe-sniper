@@ -27,7 +27,7 @@ jobs:
 
       - name: Build exe
         run: |
-          pyinstaller --noconfirm --windowed --onefile --name "POE-Sniper" main.py
+          pyinstaller --noconfirm --windowed --onefile --name "POE-Sniper" --collect-all selenium --collect-all webdriver_manager main.py
 
       - name: Zip artifact
         run: |
