@@ -13,42 +13,36 @@ def create_driver():
 		tempfile.gettempdir(),
 		f"poe-sniper-chromedriver-{int(time.time())}.log",
 	)
-	options = build_chrome_options()
+	option_profiles = [
+		'stable_pipe',
+		'safe_port',
+		'minimal',
+	]
+	service_factories = [
+		('webdriver_manager', make_service_with_webdriver_manager),
+		('selenium_manager', make_service_with_selenium_manager),
+	]
 
-	last_error = None
+	errors = []
+	for profile in option_profiles:
+		options = build_chrome_options(profile)
+		for service_name, service_factory in service_factories:
+			try:
+				service = service_factory(chrome_log_path)
+				return webdriver.Chrome(service=service, options=options)
+			except Exception as e:
+				errors.append(f'profile={profile}, service={service_name}, error={e}')
 
-	# 策略1：webdriver_manager（原本路線）
-	try:
-		service = make_service_with_webdriver_manager(chrome_log_path)
-		return webdriver.Chrome(service=service, options=options)
-	except Exception as e:
-		last_error = e
-
-	# 策略2：Selenium Manager（讓 Selenium 自己抓對應 driver）
-	try:
-		service = make_service_with_selenium_manager(chrome_log_path)
-		return webdriver.Chrome(service=service, options=options)
-	except Exception as e:
-		last_error = e
-
-	raise RuntimeError(
-		f"{last_error}\nChromeDriver log: {chrome_log_path}"
-	)
+	detail = '\n'.join(errors)
+	raise RuntimeError(f'Chrome 啟動失敗。\n{detail}\nChromeDriver log: {chrome_log_path}')
 
 
-def build_chrome_options():
+def build_chrome_options(profile='stable_pipe'):
 	options = Options()
 	options.add_argument('--start-maximized')
+	options.add_argument('--no-first-run')
+	options.add_argument('--no-default-browser-check')
 	options.add_argument('--disable-blink-features=AutomationControlled')
-	options.add_argument('--remote-allow-origins=*')
-
-	# Windows 上最常見的 Chrome instance exited 問題，先把常見穩定參數打滿
-	options.add_argument('--disable-gpu')
-	options.add_argument('--disable-dev-shm-usage')
-	options.add_argument('--no-sandbox')
-	options.add_argument('--disable-extensions')
-	options.add_argument('--disable-features=RendererCodeIntegrity')
-	options.add_argument('--remote-debugging-port=0')
 
 	# 避免沿用使用者原本 profile 造成衝突（例如 profile lock）
 	user_data_dir = os.path.join(
@@ -56,6 +50,19 @@ def build_chrome_options():
 		f"poe-sniper-profile-{int(time.time())}",
 	)
 	options.add_argument(f'--user-data-dir={user_data_dir}')
+
+	if profile == 'stable_pipe':
+		options.add_argument('--remote-debugging-pipe')
+		options.add_argument('--disable-gpu')
+		options.add_argument('--disable-extensions')
+		options.add_argument('--disable-features=RendererCodeIntegrity')
+	elif profile == 'safe_port':
+		options.add_argument('--remote-allow-origins=*')
+		options.add_argument('--remote-debugging-port=0')
+		options.add_argument('--disable-gpu')
+		options.add_argument('--disable-extensions')
+	elif profile == 'minimal':
+		pass
 
 	options.add_experimental_option('excludeSwitches', ['enable-automation'])
 
