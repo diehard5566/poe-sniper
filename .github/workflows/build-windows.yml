@@ -1,0 +1,41 @@
+name: Build Windows exe
+
+on:
+  push:
+    tags:
+      - 'v0.1.0'        # 你打 tag v0.1.0 之類就會觸發
+  workflow_dispatch:  # 也可以手動在 Actions 頁面按下去跑
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Build exe
+        run: |
+          pyinstaller --noconfirm --windowed --onefile --name "POE-Sniper" main.py
+
+      - name: Zip artifact
+        run: |
+          cd dist
+          powershell Compress-Archive -Path POE-Sniper.exe -DestinationPath POE-Sniper-win.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: POE-Sniper-win
+          path: dist/POE-Sniper-win.zip
