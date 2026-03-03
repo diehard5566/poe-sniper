@@ -9,6 +9,7 @@ def create_driver():
 	options = Options()
 	options.add_argument('--start-maximized')
 	options.add_argument('--disable-blink-features=AutomationControlled')
+	options.add_argument('--remote-allow-origins=*')
 	options.add_experimental_option('excludeSwitches', ['enable-automation'])
 	service = Service(ChromeDriverManager().install())
 	return webdriver.Chrome(service=service, options=options)
