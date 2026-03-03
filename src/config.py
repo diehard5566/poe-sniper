@@ -1,5 +1,6 @@
 import json
 import os
+from urllib.parse import unquote, urlparse
 
 DEFAULT_HOTKEY = 'ctrl+alt+t'
 DEFAULT_SELECTOR = 'button.direct-btn'
@@ -27,15 +28,18 @@ def load_urls():
 	try:
 		with open(path, 'r', encoding='utf-8') as f:
 			data = json.load(f)
-			return data if isinstance(data, list) else []
+			if not isinstance(data, list):
+				return []
+			return normalize_monitor_items(data)
 	except Exception:
 		return []
 
 
 def save_urls(urls):
 	path = get_urls_path()
+	monitor_items = normalize_monitor_items(urls if isinstance(urls, list) else [])
 	with open(path, 'w', encoding='utf-8') as f:
-		json.dump(urls, f, ensure_ascii=False, indent=2)
+		json.dump(monitor_items, f, ensure_ascii=False, indent=2)
 
 
 def load_config():
@@ -85,3 +89,65 @@ def is_valid_trade_url(url):
 		return ALLOWED_TRADE_DOMAIN in netloc
 	except Exception:
 		return False
+
+
+def normalize_monitor_items(items):
+	normalized = []
+	for item in items:
+		monitor_item = normalize_monitor_item(item)
+		if monitor_item is None:
+			continue
+		normalized.append(monitor_item)
+	return normalized
+
+
+def normalize_monitor_item(item):
+	if isinstance(item, str):
+		url = item.strip()
+		if url == '':
+			return None
+		return {
+			'name': guess_monitor_name(url),
+			'url': url,
+			'enabled': True,
+		}
+
+	if not isinstance(item, dict):
+		return None
+
+	url = item.get('url', '')
+	if not isinstance(url, str):
+		return None
+	url = url.strip()
+	if url == '':
+		return None
+
+	name = item.get('name', '')
+	if not isinstance(name, str):
+		name = ''
+	name = name.strip()
+	if name == '':
+		name = guess_monitor_name(url)
+
+	enabled = item.get('enabled', True)
+	enabled = bool(enabled)
+
+	return {
+		'name': name,
+		'url': url,
+		'enabled': enabled,
+	}
+
+
+def guess_monitor_name(url):
+	try:
+		parsed = urlparse(url)
+		parts = [part for part in (parsed.path or '').split('/') if part != '']
+		if len(parts) >= 4:
+			keyword = unquote(parts[3])
+			if keyword != '':
+				return keyword
+	except Exception:
+		pass
+
+	return url

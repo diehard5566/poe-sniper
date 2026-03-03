@@ -1,6 +1,7 @@
 import queue
 import tkinter as tk
 from tkinter import messagebox
+from tkinter import simpledialog
 
 from src import config
 from src import browser
@@ -14,7 +15,7 @@ def run():
 	root = tk.Tk()
 	root.title('POE 交易搶道具助手')
 	cfg = config.load_config()
-	urls = config.load_urls()
+	monitor_items = config.load_urls()
 	favorites = cfg.get('favorites', [])
 	if not isinstance(favorites, list):
 		favorites = []
@@ -50,17 +51,20 @@ def run():
 		root.after(log_queue.POLL_MS, poll)
 
 	handlers = {
-		'on_add_url': lambda: handle_add_url(ui[0], urls, put_log),
-		'on_remove_url': lambda: handle_remove_url(ui[0], urls, put_log),
-		'on_refresh_tabs': lambda: handle_refresh_tabs(ui[0], driver, urls, put_log),
+		'on_add_url_item': lambda: handle_add_url_item(ui[0], monitor_items, put_log),
+		'on_edit_url_item': lambda index: handle_edit_url_item(root, ui[0], monitor_items, index, put_log),
+		'on_remove_url_item': lambda index: handle_remove_url_item(ui[0], monitor_items, index, put_log),
+		'on_copy_url_item': lambda index: handle_copy_url_item(root, monitor_items, index, put_log),
+		'on_toggle_url_item': lambda index: handle_toggle_url_item(ui[0], monitor_items, index, put_log),
+		'on_refresh_tabs': lambda: handle_refresh_tabs(ui[0], driver, monitor_items, put_log),
 		'on_apply_hotkey': lambda: handle_apply_hotkey(ui[0], current_hotkey, driver, event_queue, put_log),
-		'on_start': lambda: handle_start(ui[0], driver, urls, current_hotkey, selector, event_queue, put_log),
+		'on_start': lambda: handle_start(ui[0], driver, monitor_items, current_hotkey, selector, event_queue, put_log),
 		'on_stop': lambda: handle_stop(ui[0], current_hotkey, put_log),
 		'on_manual_scan': lambda: event_queue.put(log_queue.make_trigger_scan_event()),
 		'on_favorites': lambda: handle_show_favorites(root, ui[0], favorites, put_log),
 	}
 
-	ui[0] = main_window.create_main_window(root, urls, current_hotkey[0], handlers)
+	ui[0] = main_window.create_main_window(root, monitor_items, current_hotkey[0], handlers)
 	root.protocol('WM_DELETE_WINDOW', lambda: on_closing(root, driver, current_hotkey, ui[0]))
 	poll()
 	root.mainloop()
@@ -161,36 +165,126 @@ def handle_show_favorites(root, ui_handle, favorites, put_log):
 	refresh_list()
 
 
-def handle_add_url(ui_handle, urls, put_log):
+def get_enabled_monitor_items(monitor_items):
+	return [item for item in monitor_items if bool(item.get('enabled', True))]
+
+
+def get_enabled_urls(monitor_items):
+	enabled_items = get_enabled_monitor_items(monitor_items)
+	return [item.get('url', '').strip() for item in enabled_items if item.get('url', '').strip() != '']
+
+
+def get_item_name(item):
+	name = str(item.get('name', '')).strip()
+	if name != '':
+		return name
+	return str(item.get('url', '')).strip()
+
+
+def handle_add_url_item(ui_handle, monitor_items, put_log):
 	url = ui_handle['get_entry_url']()
+	name = ui_handle['get_entry_name']()
 	if not url:
 		messagebox.showwarning('錯誤', '請輸入網址')
 		return
 	if not config.is_valid_trade_url(url):
 		messagebox.showwarning('錯誤', '請輸入有效的 pathofexile.tw/trade/search 網址')
 		return
-	if url in urls:
+	existing = [item.get('url', '').strip() for item in monitor_items]
+	if url in existing:
 		messagebox.showwarning('錯誤', '該網址已在清單中')
 		return
-	urls.append(url)
-	config.save_urls(urls)
-	ui_handle['set_urls'](urls)
+
+	if name == '':
+		name = config.guess_monitor_name(url)
+
+	monitor_items.append({
+		'name': name,
+		'url': url,
+		'enabled': True,
+	})
+	config.save_urls(monitor_items)
+	ui_handle['set_urls'](monitor_items)
 	ui_handle['clear_entry']()
-	put_log('已新增網址')
+	put_log(f'已新增監控項目：{name}')
 
 
-def handle_remove_url(ui_handle, urls, put_log):
-	idx = ui_handle['get_selected_index']()
-	if idx is None:
-		messagebox.showwarning('錯誤', '請先選取要移除的網址')
+def handle_edit_url_item(root, ui_handle, monitor_items, index, put_log):
+	if index < 0 or index >= len(monitor_items):
 		return
-	del urls[idx]
-	config.save_urls(urls)
-	ui_handle['set_urls'](urls)
-	put_log('已移除網址')
+	item = monitor_items[index]
+	old_name = get_item_name(item)
+	old_url = item.get('url', '').strip()
+	new_name = simpledialog.askstring('編輯名稱', '請輸入新的名稱：', initialvalue=old_name, parent=root)
+	if new_name is None:
+		return
+	new_name = new_name.strip()
+	if new_name == '':
+		new_name = config.guess_monitor_name(old_url)
+	new_url = simpledialog.askstring('編輯網址', '請輸入新的網址：', initialvalue=old_url, parent=root)
+	if new_url is None:
+		return
+	new_url = new_url.strip()
+	if new_url == '':
+		messagebox.showwarning('錯誤', '網址不能空白')
+		return
+	if not config.is_valid_trade_url(new_url):
+		messagebox.showwarning('錯誤', '請輸入有效的 pathofexile.tw/trade/search 網址')
+		return
+	duplicated = [
+		i for i, monitor_item in enumerate(monitor_items)
+		if i != index and monitor_item.get('url', '').strip() == new_url
+	]
+	if len(duplicated) > 0:
+		messagebox.showwarning('錯誤', '該網址已在清單中')
+		return
+	item['name'] = new_name
+	item['url'] = new_url
+	config.save_urls(monitor_items)
+	ui_handle['set_urls'](monitor_items)
+	put_log(f'已更新監控項目：{new_name}')
 
 
-def handle_refresh_tabs(ui_handle, driver_ref, urls, put_log):
+def handle_remove_url_item(ui_handle, monitor_items, index, put_log):
+	if index < 0 or index >= len(monitor_items):
+		return
+	item = monitor_items[index]
+	item_name = get_item_name(item)
+	del monitor_items[index]
+	config.save_urls(monitor_items)
+	ui_handle['set_urls'](monitor_items)
+	put_log(f'已移除監控項目：{item_name}')
+
+
+def handle_copy_url_item(root, monitor_items, index, put_log):
+	if index < 0 or index >= len(monitor_items):
+		return
+	item = monitor_items[index]
+	item_url = item.get('url', '').strip()
+	if item_url == '':
+		return
+	root.clipboard_clear()
+	root.clipboard_append(item_url)
+	item_name = get_item_name(item)
+	put_log(f'已複製網址：{item_name}')
+
+
+def handle_toggle_url_item(ui_handle, monitor_items, index, put_log):
+	if index < 0 or index >= len(monitor_items):
+		return
+	item = monitor_items[index]
+	enabled = bool(item.get('enabled', True))
+	item['enabled'] = not enabled
+	config.save_urls(monitor_items)
+	ui_handle['set_urls'](monitor_items)
+	item_name = get_item_name(item)
+	if item['enabled']:
+		put_log(f'已啟用監控：{item_name}')
+	else:
+		put_log(f'已停用監控：{item_name}')
+
+
+def handle_refresh_tabs(ui_handle, driver_ref, monitor_items, put_log):
 	if not is_driver_alive(driver_ref[0]):
 		driver_ref[0] = None
 		ui_handle['set_start_enabled'](True)
@@ -199,8 +293,12 @@ def handle_refresh_tabs(ui_handle, driver_ref, urls, put_log):
 		put_log('偵測到瀏覽器已關閉，請重新啟動監控')
 		messagebox.showwarning('尚未啟動', '請先按「啟動」開啟瀏覽器')
 		return
+	enabled_urls = get_enabled_urls(monitor_items)
+	if len(enabled_urls) == 0:
+		messagebox.showwarning('尚無啟用項目', '請至少啟用一個監控項目')
+		return
 	put_log('正在重新載入所有網址...')
-	browser.refresh_tabs(driver_ref[0], urls)
+	browser.refresh_tabs(driver_ref[0], enabled_urls)
 	put_log('所有 live search 已重新載入完畢')
 
 
@@ -227,7 +325,11 @@ def handle_apply_hotkey(ui_handle, current_hotkey_ref, driver_ref, event_queue, 
 	messagebox.showinfo('成功', f'熱鍵已設定為：{new_hotkey}\n看到好貨就按這個鍵！')
 
 
-def handle_start(ui_handle, driver_ref, urls, current_hotkey_ref, selector, event_queue, put_log):
+def handle_start(ui_handle, driver_ref, monitor_items, current_hotkey_ref, selector, event_queue, put_log):
+	enabled_urls = get_enabled_urls(monitor_items)
+	if len(enabled_urls) == 0:
+		messagebox.showwarning('尚無啟用項目', '請至少啟用一個監控項目')
+		return
 	if driver_ref[0] is not None:
 		if is_driver_alive(driver_ref[0]):
 			put_log('瀏覽器已經開啟')
@@ -245,7 +347,7 @@ def handle_start(ui_handle, driver_ref, urls, current_hotkey_ref, selector, even
 			poe_sessid = ui_handle['get_poe_sessid']()
 		if poe_sessid:
 			browser.apply_poe_sessid(driver_ref[0], poe_sessid)
-		browser.open_urls(driver_ref[0], urls)
+		browser.open_urls(driver_ref[0], enabled_urls)
 	except Exception as e:
 		put_log(f'啟動失敗：{e}')
 		messagebox.showerror('啟動失敗', f'無法開啟 Chrome：{str(e)}\n\n請確認已安裝 Chrome 瀏覽器')
@@ -268,7 +370,7 @@ def handle_start(ui_handle, driver_ref, urls, current_hotkey_ref, selector, even
 
 	ui_handle['set_start_enabled'](False)
 	ui_handle['set_stop_enabled'](True)
-	ui_handle['set_status'](f'監控中 | 熱鍵：{current_hotkey_ref[0]} | {len(urls)} 個分頁')
+	ui_handle['set_status'](f'監控中 | 熱鍵：{current_hotkey_ref[0]} | {len(enabled_urls)} 個分頁')
 	put_log('瀏覽器啟動成功！所有 live search 已載入')
 	put_log(f'看到想要的道具就按【{current_hotkey_ref[0]}】立即搶！')
 

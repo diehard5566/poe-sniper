@@ -30,7 +30,7 @@ jobs:
 
       - name: Build exe
         run: |
-          pyinstaller --noconfirm --windowed --onefile --name "POE-Sniper" --icon "assets/poe-sniper.ico" --collect-all selenium --collect-all webdriver_manager main.py
+          pyinstaller --noconfirm --windowed --onefile --name "POE-Sniper-v0.3.0" --icon "assets/poe-sniper.ico" --collect-all selenium --collect-all webdriver_manager main.py
 
       - name: Zip artifact
         run: |
