@@ -1,3 +1,6 @@
+import os
+import platform
+import tempfile
 import time
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -6,13 +9,106 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 
 def create_driver():
+	chrome_log_path = os.path.join(
+		tempfile.gettempdir(),
+		f"poe-sniper-chromedriver-{int(time.time())}.log",
+	)
+	options = build_chrome_options()
+
+	last_error = None
+
+	# 策略1：webdriver_manager（原本路線）
+	try:
+		service = make_service_with_webdriver_manager(chrome_log_path)
+		return webdriver.Chrome(service=service, options=options)
+	except Exception as e:
+		last_error = e
+
+	# 策略2：Selenium Manager（讓 Selenium 自己抓對應 driver）
+	try:
+		service = make_service_with_selenium_manager(chrome_log_path)
+		return webdriver.Chrome(service=service, options=options)
+	except Exception as e:
+		last_error = e
+
+	raise RuntimeError(
+		f"{last_error}\nChromeDriver log: {chrome_log_path}"
+	)
+
+
+def build_chrome_options():
 	options = Options()
 	options.add_argument('--start-maximized')
 	options.add_argument('--disable-blink-features=AutomationControlled')
 	options.add_argument('--remote-allow-origins=*')
+
+	# Windows 上最常見的 Chrome instance exited 問題，先把常見穩定參數打滿
+	options.add_argument('--disable-gpu')
+	options.add_argument('--disable-dev-shm-usage')
+	options.add_argument('--no-sandbox')
+	options.add_argument('--disable-extensions')
+	options.add_argument('--disable-features=RendererCodeIntegrity')
+	options.add_argument('--remote-debugging-port=0')
+
+	# 避免沿用使用者原本 profile 造成衝突（例如 profile lock）
+	user_data_dir = os.path.join(
+		tempfile.gettempdir(),
+		f"poe-sniper-profile-{int(time.time())}",
+	)
+	options.add_argument(f'--user-data-dir={user_data_dir}')
+
 	options.add_experimental_option('excludeSwitches', ['enable-automation'])
-	service = Service(ChromeDriverManager().install())
-	return webdriver.Chrome(service=service, options=options)
+
+	chrome_binary = resolve_chrome_binary()
+	if chrome_binary:
+		options.binary_location = chrome_binary
+
+	return options
+
+
+def resolve_chrome_binary():
+	env_binary = os.environ.get('CHROME_BINARY')
+	if env_binary and os.path.exists(env_binary):
+		return env_binary
+
+	system_name = platform.system().lower()
+	candidates = []
+
+	if system_name == 'windows':
+		candidates = [
+			r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+			r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+		]
+	elif system_name == 'darwin':
+		candidates = [
+			'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+		]
+	else:
+		candidates = [
+			'/usr/bin/google-chrome',
+			'/usr/bin/google-chrome-stable',
+		]
+
+	for path in candidates:
+		if os.path.exists(path):
+			return path
+
+	return None
+
+
+def make_service_with_webdriver_manager(chrome_log_path):
+	driver_path = ChromeDriverManager().install()
+	try:
+		return Service(executable_path=driver_path, log_output=chrome_log_path)
+	except TypeError:
+		return Service(executable_path=driver_path)
+
+
+def make_service_with_selenium_manager(chrome_log_path):
+	try:
+		return Service(log_output=chrome_log_path)
+	except TypeError:
+		return Service()
 
 
 def open_urls(driver, url_list, delay=0.5):
