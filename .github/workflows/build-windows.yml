@@ -12,6 +12,9 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      APP_NAME: POE-Sniper
+      VERSION: ${{ github.ref_name }}
 
     steps:
       - name: Checkout
@@ -30,23 +33,30 @@ jobs:
 
       - name: Build exe
         run: |
-          pyinstaller --noconfirm --windowed --onefile --name "POE-Sniper-v0.3.0" --icon "assets/poe-sniper.ico" --collect-all selenium --collect-all webdriver_manager main.py
+          pyinstaller --noconfirm --windowed --onefile `
+            --name "${{ env.APP_NAME }}-${{ env.VERSION }}" `
+            --icon "assets/poe-sniper.ico" `
+            --collect-all selenium `
+            --collect-all webdriver_manager `
+            main.py
 
       - name: Zip artifact
         run: |
           cd dist
-          powershell Compress-Archive -Path POE-Sniper.exe -DestinationPath POE-Sniper-win.zip
+          $exe = "${{ env.APP_NAME }}-${{ env.VERSION }}.exe"
+          $zip = "${{ env.APP_NAME }}-${{ env.VERSION }}-win.zip"
+          Compress-Archive -Path $exe -DestinationPath $zip
 
       - name: Upload artifact (for manual download)
         uses: actions/upload-artifact@v4
         with:
-          name: POE-Sniper-win
-          path: dist/POE-Sniper-win.zip
+          name: ${{ env.APP_NAME }}-${{ env.VERSION }}-win
+          path: dist/${{ env.APP_NAME }}-${{ env.VERSION }}-win.zip
 
       - name: Attach to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: dist/POE-Sniper-win.zip
+          files: dist/${{ env.APP_NAME }}-${{ env.VERSION }}-win.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
