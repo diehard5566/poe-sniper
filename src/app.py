@@ -266,6 +266,23 @@ def get_item_name(item):
 	return str(item.get('url', '')).strip()
 
 
+def ensure_hotkey_registered(combo, event_queue):
+	if combo.strip() == '':
+		return False
+	# 先清掉同組合，避免重複註冊造成 callback 疊加。
+	hotkey.remove_hotkey(combo)
+	return hotkey.add_hotkey(
+		combo,
+		lambda: event_queue.put(log_queue.make_trigger_scan_event()),
+	)
+
+
+def ensure_hotkey_removed(combo):
+	if combo.strip() == '':
+		return False
+	return hotkey.remove_hotkey(combo)
+
+
 def handle_add_url_item(ui_handle, monitor_items, put_log):
 	url = ui_handle['get_entry_url']()
 	name = ui_handle['get_entry_name']()
@@ -396,12 +413,11 @@ def handle_apply_hotkey(ui_handle, current_hotkey_ref, driver_ref, event_queue, 
 		messagebox.showinfo('提示', '已是目前熱鍵')
 		return
 	if is_driver_alive(driver_ref[0]):
-		try:
-			hotkey.add_hotkey(new_hotkey, lambda: event_queue.put(log_queue.make_trigger_scan_event()))
-		except Exception as e:
-			messagebox.showerror('熱鍵錯誤', f'無法設定熱鍵：{e}')
+		is_registered = ensure_hotkey_registered(new_hotkey, event_queue)
+		if not is_registered:
+			messagebox.showerror('熱鍵錯誤', '無法設定熱鍵，請用系統管理員權限啟動或改用其他組合鍵')
 			return
-		hotkey.remove_hotkey(current_hotkey_ref[0])
+		ensure_hotkey_removed(current_hotkey_ref[0])
 		put_log(f'熱鍵已更新為：{new_hotkey}')
 	current_hotkey_ref[0] = new_hotkey
 	cfg = config.load_config()
@@ -426,9 +442,16 @@ def handle_start(
 		return
 	if driver_ref[0] is not None:
 		if is_driver_alive(driver_ref[0]):
-			put_log('瀏覽器已經開啟')
+			is_registered = ensure_hotkey_registered(current_hotkey_ref[0], event_queue)
+			if is_registered:
+				put_log(f'監控已恢復，熱鍵已啟用：{current_hotkey_ref[0]}')
+			else:
+				put_log('監控已恢復，但熱鍵啟用失敗，請改用「手動掃描一次」')
 			if is_monitoring_active_ref is not None:
 				is_monitoring_active_ref[0] = True
+			ui_handle['set_start_enabled'](False)
+			ui_handle['set_stop_enabled'](True)
+			ui_handle['set_status'](f'監控中（背景） | 熱鍵：{current_hotkey_ref[0]} | 已連線')
 			return
 		driver_ref[0] = None
 		ui_handle['set_start_enabled'](True)
@@ -452,13 +475,9 @@ def handle_start(
 			driver_ref[0] = None
 		return
 
-	try:
-		hotkey.add_hotkey(
-			current_hotkey_ref[0],
-			lambda: event_queue.put(log_queue.make_trigger_scan_event()),
-		)
-	except Exception as e:
-		put_log(f'熱鍵啟用失敗：{e}')
+	is_registered = ensure_hotkey_registered(current_hotkey_ref[0], event_queue)
+	if not is_registered:
+		put_log('熱鍵啟用失敗')
 		messagebox.showwarning(
 			'熱鍵啟用失敗',
 			'瀏覽器已啟動，但熱鍵無法啟用。\n請改用「手動掃描一次」按鈕觸發掃描。',
@@ -474,7 +493,7 @@ def handle_start(
 
 
 def handle_stop(ui_handle, current_hotkey_ref, put_log, is_monitoring_active_ref=None):
-	hotkey.remove_hotkey(current_hotkey_ref[0])
+	ensure_hotkey_removed(current_hotkey_ref[0])
 	if is_monitoring_active_ref is not None:
 		is_monitoring_active_ref[0] = False
 	ui_handle['set_start_enabled'](True)
@@ -487,10 +506,7 @@ def on_closing(root, driver_ref, current_hotkey_ref, ui_handle):
 	if driver_ref[0] is not None:
 		if not messagebox.askokcancel('關閉程式', '確定要關閉程式並結束 Chrome 嗎？'):
 			return
-		try:
-			hotkey.remove_hotkey(current_hotkey_ref[0])
-		except Exception:
-			pass
+		ensure_hotkey_removed(current_hotkey_ref[0])
 		browser.quit_driver(driver_ref[0])
 		driver_ref[0] = None
 	root.destroy()
