@@ -30,11 +30,9 @@ def run():
 	selector = cfg.get('buttonSelector', config.DEFAULT_SELECTOR)
 	detect_interval_ms = int(cfg.get('detectIntervalMs', 1200))
 	notify_throttle_ms = int(cfg.get('notifyThrottleMs', 4500))
-	target_cooldown_ms = int(cfg.get('targetCooldownMs', 120000))
-	queue_max_size = int(cfg.get('targetQueueMaxSize', 20))
 	ui = [None]
-	target_queue = []
-	target_seen_map = {}
+	page_activity_map = {}
+	recent_activity = []
 
 	def put_log(message):
 		event_queue.put(log_queue.make_log_event(message))
@@ -43,15 +41,20 @@ def run():
 		if driver[0] is None:
 			put_log('瀏覽器未啟動')
 			return
-		if len(target_queue) == 0:
-			put_log('目前沒有待搶目標（請等待 live search 新通知）')
+		enabled_urls = get_enabled_urls(monitor_items)
+		if len(enabled_urls) == 0:
+			put_log('目前沒有啟用中的監控網址')
 			return
-		target = target_queue.pop(0)
-		put_log(f"開始處理目標：{target.get('url_preview', '未知來源')}")
-		success, message, _notify_key = scanner.click_travel_target(driver[0], selector, target)
+		priority_map = build_monitor_priority_map(monitor_items)
+		preferred_urls = build_preferred_urls(recent_activity, priority_map, enabled_urls)
+		success, message, clicked_url = scanner.scan_and_click_travel_to_hideout(
+			driver[0],
+			selector,
+			preferred_urls,
+		)
 		put_log(message)
-		if not success:
-			return
+		if success and clicked_url != '':
+			mark_recent_activity_hit(recent_activity, clicked_url)
 
 	def on_log(message):
 		if ui[0]:
@@ -72,35 +75,34 @@ def run():
 			root.after(detect_interval_ms, detect_new_item_tick)
 			return
 		now = int(time.time() * 1000)
-		cleanup_seen_targets(target_seen_map, now, target_cooldown_ms)
 		candidates = scanner.detect_travel_candidates(driver[0], selector)
 		priority_map = build_monitor_priority_map(monitor_items)
-		sorted_candidates = sorted(
-			candidates,
-			key=lambda candidate: get_candidate_priority(candidate, priority_map),
-		)
-		for candidate in sorted_candidates:
-			fingerprint = candidate.get('fingerprint', '')
-			if fingerprint == '':
+		for candidate in candidates:
+			url = candidate.get('url', '')
+			if url == '':
 				continue
-			if is_target_in_queue(target_queue, fingerprint):
+			signature = candidate.get('signature', '')
+			if signature == '':
 				continue
-			last_seen_ts = int(target_seen_map.get(fingerprint, 0))
-			if now - last_seen_ts < max(target_cooldown_ms, notify_throttle_ms):
+			state = page_activity_map.get(url, {})
+			last_signature = str(state.get('signature', ''))
+			if last_signature == signature:
 				continue
-			target_seen_map[fingerprint] = now
-			if len(target_queue) >= queue_max_size:
-				break
-			target_queue.append({
-				'notify_key': candidate.get('notify_key', ''),
-				'url': candidate.get('url', ''),
-				'url_preview': candidate.get('url_preview', ''),
-				'fingerprint': fingerprint,
-				'priority': get_candidate_priority(candidate, priority_map),
-				'created_at': now,
-			})
-			target_queue.sort(key=lambda item: (int(item.get('priority', 999999)), int(item.get('created_at', 0))))
-			put_log(f"已加入搶購佇列（共 {len(target_queue)} 筆）：{candidate.get('url_preview', '')}")
+			priority = get_candidate_priority(candidate, priority_map)
+			update_recent_activity(
+				recent_activity=recent_activity,
+				url=url,
+				changed_at=now,
+				priority=priority,
+			)
+			last_log_ts = int(state.get('last_log_ts', 0))
+			if now - last_log_ts >= notify_throttle_ms:
+				put_log(candidate.get('message', '偵測到可搶道具'))
+				state['last_log_ts'] = now
+			state['signature'] = signature
+			state['changed_at'] = now
+			state['priority'] = priority
+			page_activity_map[url] = state
 		root.after(detect_interval_ms, detect_new_item_tick)
 
 	handlers = {
@@ -243,20 +245,49 @@ def get_candidate_priority(candidate, priority_map):
 	return 999999
 
 
-def is_target_in_queue(target_queue, fingerprint):
-	if fingerprint == '':
-		return False
-	for item in target_queue:
-		if item.get('fingerprint', '') == fingerprint:
-			return True
-	return False
+def update_recent_activity(recent_activity, url, changed_at, priority):
+	found_item = None
+	for item in recent_activity:
+		if item.get('url', '') == url:
+			found_item = item
+			break
+	if found_item is None:
+		found_item = {
+			'url': url,
+			'changed_at': changed_at,
+			'priority': priority,
+			'last_hit_at': 0,
+		}
+		recent_activity.append(found_item)
+	else:
+		found_item['changed_at'] = changed_at
+		found_item['priority'] = priority
+	recent_activity.sort(key=lambda item: (-int(item.get('changed_at', 0)), int(item.get('priority', 999999))))
 
 
-def cleanup_seen_targets(target_seen_map, now_ms, cooldown_ms):
-	expire_before = now_ms - max(cooldown_ms, 1000)
-	to_delete = [fingerprint for fingerprint, ts in target_seen_map.items() if int(ts) < expire_before]
-	for fingerprint in to_delete:
-		del target_seen_map[fingerprint]
+def mark_recent_activity_hit(recent_activity, clicked_url):
+	for item in recent_activity:
+		if item.get('url', '') == clicked_url:
+			item['last_hit_at'] = int(time.time() * 1000)
+			item['changed_at'] = 0
+			break
+
+
+def build_preferred_urls(recent_activity, priority_map, enabled_urls):
+	enabled_set = set(enabled_urls)
+	ordered_urls = []
+	for item in recent_activity:
+		url = item.get('url', '')
+		if url == '' or url not in enabled_set:
+			continue
+		if url not in ordered_urls:
+			ordered_urls.append(url)
+
+	remaining_urls = sorted(
+		[url for url in enabled_urls if url not in ordered_urls],
+		key=lambda url: int(priority_map.get(url, 999999)),
+	)
+	return [*ordered_urls, *remaining_urls]
 
 
 def get_item_name(item):
