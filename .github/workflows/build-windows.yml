@@ -37,7 +37,6 @@ jobs:
             --name "${{ env.APP_NAME }}-${{ env.VERSION }}" `
             --icon "assets/poe-sniper.ico" `
             --collect-all playwright `
-            --collect-all win10toast `
             main.py
 
       - name: Zip artifact

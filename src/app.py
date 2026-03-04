@@ -8,7 +8,6 @@ from src import config
 from src import browser
 from src import scanner
 from src import hotkey
-from src import notifier
 from src.ui import main_window
 from src.ui import log_queue
 
@@ -31,11 +30,11 @@ def run():
 	selector = cfg.get('buttonSelector', config.DEFAULT_SELECTOR)
 	detect_interval_ms = int(cfg.get('detectIntervalMs', 1200))
 	notify_throttle_ms = int(cfg.get('notifyThrottleMs', 4500))
+	target_cooldown_ms = int(cfg.get('targetCooldownMs', 120000))
+	queue_max_size = int(cfg.get('targetQueueMaxSize', 20))
 	ui = [None]
-	notify_state = {
-		'last_key': '',
-		'last_ts': 0,
-	}
+	target_queue = []
+	target_seen_map = {}
 
 	def put_log(message):
 		event_queue.put(log_queue.make_log_event(message))
@@ -44,9 +43,15 @@ def run():
 		if driver[0] is None:
 			put_log('瀏覽器未啟動')
 			return
-		put_log('開始掃描所有分頁...')
-		_success, message = scanner.scan_and_click_travel_to_hideout(driver[0], selector)
+		if len(target_queue) == 0:
+			put_log('目前沒有待搶目標（請等待 live search 新通知）')
+			return
+		target = target_queue.pop(0)
+		put_log(f"開始處理目標：{target.get('url_preview', '未知來源')}")
+		success, message, _notify_key = scanner.click_travel_target(driver[0], selector, target)
 		put_log(message)
+		if not success:
+			return
 
 	def on_log(message):
 		if ui[0]:
@@ -66,18 +71,36 @@ def run():
 		if not is_driver_alive(driver[0]):
 			root.after(detect_interval_ms, detect_new_item_tick)
 			return
-		found, message, notify_key = scanner.detect_travel_button(driver[0], selector, should_click=False)
-		if found:
-			now = int(time.time() * 1000)
-			last_key = notify_state['last_key']
-			last_ts = int(notify_state['last_ts'])
-			is_same_key = notify_key == last_key
-			if (not is_same_key) or (now - last_ts >= notify_throttle_ms):
-				notify_state['last_key'] = notify_key
-				notify_state['last_ts'] = now
-				notifier.notify_new_item('POE Sniper', message)
-				notifier.play_alert_sound()
-				put_log(message)
+		now = int(time.time() * 1000)
+		cleanup_seen_targets(target_seen_map, now, target_cooldown_ms)
+		candidates = scanner.detect_travel_candidates(driver[0], selector)
+		priority_map = build_monitor_priority_map(monitor_items)
+		sorted_candidates = sorted(
+			candidates,
+			key=lambda candidate: get_candidate_priority(candidate, priority_map),
+		)
+		for candidate in sorted_candidates:
+			fingerprint = candidate.get('fingerprint', '')
+			if fingerprint == '':
+				continue
+			if is_target_in_queue(target_queue, fingerprint):
+				continue
+			last_seen_ts = int(target_seen_map.get(fingerprint, 0))
+			if now - last_seen_ts < max(target_cooldown_ms, notify_throttle_ms):
+				continue
+			target_seen_map[fingerprint] = now
+			if len(target_queue) >= queue_max_size:
+				break
+			target_queue.append({
+				'notify_key': candidate.get('notify_key', ''),
+				'url': candidate.get('url', ''),
+				'url_preview': candidate.get('url_preview', ''),
+				'fingerprint': fingerprint,
+				'priority': get_candidate_priority(candidate, priority_map),
+				'created_at': now,
+			})
+			target_queue.sort(key=lambda item: (int(item.get('priority', 999999)), int(item.get('created_at', 0))))
+			put_log(f"已加入搶購佇列（共 {len(target_queue)} 筆）：{candidate.get('url_preview', '')}")
 		root.after(detect_interval_ms, detect_new_item_tick)
 
 	handlers = {
@@ -197,6 +220,43 @@ def get_enabled_monitor_items(monitor_items):
 def get_enabled_urls(monitor_items):
 	enabled_items = get_enabled_monitor_items(monitor_items)
 	return [item.get('url', '').strip() for item in enabled_items if item.get('url', '').strip() != '']
+
+
+def build_monitor_priority_map(monitor_items):
+	priority_map = {}
+	for index, item in enumerate(monitor_items):
+		url = item.get('url', '').strip()
+		if url == '':
+			continue
+		custom_priority = item.get('priority')
+		if isinstance(custom_priority, int):
+			priority_map[url] = custom_priority
+			continue
+		priority_map[url] = index
+	return priority_map
+
+
+def get_candidate_priority(candidate, priority_map):
+	url = candidate.get('url', '').strip()
+	if url in priority_map:
+		return int(priority_map[url])
+	return 999999
+
+
+def is_target_in_queue(target_queue, fingerprint):
+	if fingerprint == '':
+		return False
+	for item in target_queue:
+		if item.get('fingerprint', '') == fingerprint:
+			return True
+	return False
+
+
+def cleanup_seen_targets(target_seen_map, now_ms, cooldown_ms):
+	expire_before = now_ms - max(cooldown_ms, 1000)
+	to_delete = [fingerprint for fingerprint, ts in target_seen_map.items() if int(ts) < expire_before]
+	for fingerprint in to_delete:
+		del target_seen_map[fingerprint]
 
 
 def get_item_name(item):

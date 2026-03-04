@@ -52,6 +52,8 @@ def load_config():
 		'favorites': [],
 		'detectIntervalMs': 1200,
 		'notifyThrottleMs': 4500,
+		'targetCooldownMs': 120000,
+		'targetQueueMaxSize': 20,
 	}
 	if not os.path.exists(path):
 		return default
