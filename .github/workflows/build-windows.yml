@@ -36,8 +36,8 @@ jobs:
           pyinstaller --noconfirm --windowed --onefile `
             --name "${{ env.APP_NAME }}-${{ env.VERSION }}" `
             --icon "assets/poe-sniper.ico" `
-            --collect-all selenium `
-            --collect-all webdriver_manager `
+            --collect-all playwright `
+            --collect-all win10toast `
             main.py
 
       - name: Zip artifact

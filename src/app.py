@@ -1,4 +1,5 @@
 import queue
+import time
 import tkinter as tk
 from tkinter import messagebox
 from tkinter import simpledialog
@@ -7,6 +8,7 @@ from src import config
 from src import browser
 from src import scanner
 from src import hotkey
+from src import notifier
 from src.ui import main_window
 from src.ui import log_queue
 
@@ -24,9 +26,16 @@ def run():
 
 	event_queue = queue.Queue()
 	driver = [None]
+	is_monitoring_active = [False]
 	current_hotkey = [cfg.get('hotkey', config.DEFAULT_HOTKEY)]
 	selector = cfg.get('buttonSelector', config.DEFAULT_SELECTOR)
+	detect_interval_ms = int(cfg.get('detectIntervalMs', 1200))
+	notify_throttle_ms = int(cfg.get('notifyThrottleMs', 4500))
 	ui = [None]
+	notify_state = {
+		'last_key': '',
+		'last_ts': 0,
+	}
 
 	def put_log(message):
 		event_queue.put(log_queue.make_log_event(message))
@@ -50,6 +59,27 @@ def run():
 		log_queue.process_queue(event_queue, on_log, on_trigger_scan)
 		root.after(log_queue.POLL_MS, poll)
 
+	def detect_new_item_tick():
+		if not is_monitoring_active[0]:
+			root.after(detect_interval_ms, detect_new_item_tick)
+			return
+		if not is_driver_alive(driver[0]):
+			root.after(detect_interval_ms, detect_new_item_tick)
+			return
+		found, message, notify_key = scanner.detect_travel_button(driver[0], selector, should_click=False)
+		if found:
+			now = int(time.time() * 1000)
+			last_key = notify_state['last_key']
+			last_ts = int(notify_state['last_ts'])
+			is_same_key = notify_key == last_key
+			if (not is_same_key) or (now - last_ts >= notify_throttle_ms):
+				notify_state['last_key'] = notify_key
+				notify_state['last_ts'] = now
+				notifier.notify_new_item('POE Sniper', message)
+				notifier.play_alert_sound()
+				put_log(message)
+		root.after(detect_interval_ms, detect_new_item_tick)
+
 	handlers = {
 		'on_add_url_item': lambda: handle_add_url_item(ui[0], monitor_items, put_log),
 		'on_edit_url_item': lambda index: handle_edit_url_item(root, ui[0], monitor_items, index, put_log),
@@ -58,8 +88,8 @@ def run():
 		'on_toggle_url_item': lambda index: handle_toggle_url_item(ui[0], monitor_items, index, put_log),
 		'on_refresh_tabs': lambda: handle_refresh_tabs(ui[0], driver, monitor_items, put_log),
 		'on_apply_hotkey': lambda: handle_apply_hotkey(ui[0], current_hotkey, driver, event_queue, put_log),
-		'on_start': lambda: handle_start(ui[0], driver, monitor_items, current_hotkey, selector, event_queue, put_log),
-		'on_stop': lambda: handle_stop(ui[0], current_hotkey, put_log),
+		'on_start': lambda: handle_start(ui[0], driver, monitor_items, current_hotkey, selector, event_queue, put_log, is_monitoring_active),
+		'on_stop': lambda: handle_stop(ui[0], current_hotkey, put_log, is_monitoring_active),
 		'on_manual_scan': lambda: event_queue.put(log_queue.make_trigger_scan_event()),
 		'on_favorites': lambda: handle_show_favorites(root, ui[0], favorites, put_log),
 	}
@@ -67,17 +97,12 @@ def run():
 	ui[0] = main_window.create_main_window(root, monitor_items, current_hotkey[0], handlers)
 	root.protocol('WM_DELETE_WINDOW', lambda: on_closing(root, driver, current_hotkey, ui[0]))
 	poll()
+	detect_new_item_tick()
 	root.mainloop()
 
 
 def is_driver_alive(driver):
-	if driver is None:
-		return False
-	try:
-		_ = driver.window_handles
-		return True
-	except Exception:
-		return False
+	return browser.is_session_alive(driver)
 
 
 def handle_show_favorites(root, ui_handle, favorites, put_log):
@@ -310,7 +335,7 @@ def handle_apply_hotkey(ui_handle, current_hotkey_ref, driver_ref, event_queue, 
 	if new_hotkey == current_hotkey_ref[0]:
 		messagebox.showinfo('提示', '已是目前熱鍵')
 		return
-	if driver_ref[0] is not None:
+	if is_driver_alive(driver_ref[0]):
 		try:
 			hotkey.add_hotkey(new_hotkey, lambda: event_queue.put(log_queue.make_trigger_scan_event()))
 		except Exception as e:
@@ -325,7 +350,16 @@ def handle_apply_hotkey(ui_handle, current_hotkey_ref, driver_ref, event_queue, 
 	messagebox.showinfo('成功', f'熱鍵已設定為：{new_hotkey}\n看到好貨就按這個鍵！')
 
 
-def handle_start(ui_handle, driver_ref, monitor_items, current_hotkey_ref, selector, event_queue, put_log):
+def handle_start(
+	ui_handle,
+	driver_ref,
+	monitor_items,
+	current_hotkey_ref,
+	selector,
+	event_queue,
+	put_log,
+	is_monitoring_active_ref=None,
+):
 	enabled_urls = get_enabled_urls(monitor_items)
 	if len(enabled_urls) == 0:
 		messagebox.showwarning('尚無啟用項目', '請至少啟用一個監控項目')
@@ -333,6 +367,8 @@ def handle_start(ui_handle, driver_ref, monitor_items, current_hotkey_ref, selec
 	if driver_ref[0] is not None:
 		if is_driver_alive(driver_ref[0]):
 			put_log('瀏覽器已經開啟')
+			if is_monitoring_active_ref is not None:
+				is_monitoring_active_ref[0] = True
 			return
 		driver_ref[0] = None
 		ui_handle['set_start_enabled'](True)
@@ -340,8 +376,8 @@ def handle_start(ui_handle, driver_ref, monitor_items, current_hotkey_ref, selec
 		ui_handle['set_status']('瀏覽器已關閉，重新啟動中...')
 		put_log('偵測到先前的瀏覽器已關閉，準備重新啟動')
 	try:
-		put_log('正在啟動 Chrome 並載入所有網址...')
-		driver_ref[0] = browser.create_driver()
+		put_log('正在啟動 Playwright 背景監控並載入所有網址...')
+		driver_ref[0] = browser.create_driver(headless=True)
 		poe_sessid = ''
 		if ui_handle and 'get_poe_sessid' in ui_handle:
 			poe_sessid = ui_handle['get_poe_sessid']()
@@ -370,17 +406,21 @@ def handle_start(ui_handle, driver_ref, monitor_items, current_hotkey_ref, selec
 
 	ui_handle['set_start_enabled'](False)
 	ui_handle['set_stop_enabled'](True)
-	ui_handle['set_status'](f'監控中 | 熱鍵：{current_hotkey_ref[0]} | {len(enabled_urls)} 個分頁')
-	put_log('瀏覽器啟動成功！所有 live search 已載入')
+	ui_handle['set_status'](f'監控中（背景） | 熱鍵：{current_hotkey_ref[0]} | {len(enabled_urls)} 個分頁')
+	if is_monitoring_active_ref is not None:
+		is_monitoring_active_ref[0] = True
+	put_log('背景監控啟動成功！所有 live search 已載入')
 	put_log(f'看到想要的道具就按【{current_hotkey_ref[0]}】立即搶！')
 
 
-def handle_stop(ui_handle, current_hotkey_ref, put_log):
+def handle_stop(ui_handle, current_hotkey_ref, put_log, is_monitoring_active_ref=None):
 	hotkey.remove_hotkey(current_hotkey_ref[0])
+	if is_monitoring_active_ref is not None:
+		is_monitoring_active_ref[0] = False
 	ui_handle['set_start_enabled'](True)
 	ui_handle['set_stop_enabled'](False)
-	ui_handle['set_status']('熱鍵已停止 | 瀏覽器仍開啟中')
-	put_log('熱鍵已停止（可重新套用或重新啟動）')
+	ui_handle['set_status']('監控已停止 | 背景瀏覽器仍開啟中')
+	put_log('監控與熱鍵已停止（可重新啟動）')
 
 
 def on_closing(root, driver_ref, current_hotkey_ref, ui_handle):

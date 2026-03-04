@@ -50,6 +50,8 @@ def load_config():
 		'windowWidth': 900,
 		'windowHeight': 700,
 		'favorites': [],
+		'detectIntervalMs': 1200,
+		'notifyThrottleMs': 4500,
 	}
 	if not os.path.exists(path):
 		return default

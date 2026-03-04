@@ -190,7 +190,7 @@ def create_main_window(root, urls, hotkey_initial, handlers):
 		hotkey_capture_ref['capturing'] = False
 		hotkey_capture_ref['binding_id'] = None
 		hotkey_capture_ref['pressed_mods'].clear()
-		hotkey_hint_var.set('範例：ctrl+alt+t, f12, alt+q, ctrl+c')
+		hotkey_hint_var.set('範例：ctrl+alt+t, f12, alt+q, ctrl+c（偵測到新貨會 Toast+音效提醒）')
 		record_hotkey_btn.config(state=tk.NORMAL)
 
 	def on_hotkey_keypress(event):
@@ -335,7 +335,7 @@ def create_main_window(root, urls, hotkey_initial, handlers):
 	).pack(anchor='center')
 	tk.Label(
 		header_inner,
-		text='新增你的 live search 網址 → 設定熱鍵 → 啟動 → 看到好貨就按熱鍵搶！\n完全自動掃描多個分頁，精準點擊 Travel to Hideout',
+		text='新增你的 live search 網址 → 設定熱鍵 → 啟動背景監控\n偵測到新貨會顯示 Windows 通知 + 音效，按熱鍵即可搶購',
 		bg=CARD_BG,
 		fg=MUTED_TEXT,
 		font=SMALL_FONT,
@@ -422,7 +422,7 @@ def create_main_window(root, urls, hotkey_initial, handlers):
 		style='Accent.TButton',
 	)
 	record_hotkey_btn.pack(fill=tk.X, pady=(8, 4))
-	hotkey_hint_var = tk.StringVar(value='範例：ctrl+alt+t, f12, alt+q, ctrl+c')
+	hotkey_hint_var = tk.StringVar(value='範例：ctrl+alt+t, f12, alt+q, ctrl+c（偵測到新貨會 Toast+音效提醒）')
 	tk.Label(
 		hotkey_inner,
 		textvariable=hotkey_hint_var,
@@ -479,13 +479,13 @@ def create_main_window(root, urls, hotkey_initial, handlers):
 	control_card = create_card(main_frame)
 	control_inner = tk.Frame(control_card, bg=CARD_BG, padx=12, pady=10)
 	control_inner.pack(fill=tk.X)
-	create_title(control_inner, '控制中心').pack(anchor='w', pady=(0, 8))
+	create_title(control_inner, '控制中心（Playwright 背景模式）').pack(anchor='w', pady=(0, 8))
 
 	control_row = tk.Frame(control_inner, bg=CARD_BG)
 	control_row.pack(fill=tk.X)
 	start_btn = ttk.Button(
 		control_row,
-		text='🚀 啟動（開啟 Chrome）',
+		text='🚀 啟動（背景監控）',
 		command=handlers['on_start'],
 		cursor='hand2',
 		style='Primary.TButton',

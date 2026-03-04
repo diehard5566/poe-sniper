@@ -1,180 +1,122 @@
-import os
-import platform
-import tempfile
-import time
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
+from dataclasses import dataclass
+from playwright.sync_api import sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 
-def create_driver():
-	chrome_log_path = os.path.join(
-		tempfile.gettempdir(),
-		f"poe-sniper-chromedriver-{int(time.time())}.log",
-	)
-	errors = []
-
-	for profile in ('safe_port', 'minimal'):
-		try:
-			options = build_chrome_options(profile)
-			service = make_service_with_webdriver_manager(chrome_log_path)
-			return webdriver.Chrome(service=service, options=options)
-		except Exception as e1:
-			errors.append(f'profile={profile}, service=webdriver_manager, error={e1}')
-
-		try:
-			options = build_chrome_options(profile)
-			service = make_service_with_selenium_manager(chrome_log_path)
-			return webdriver.Chrome(service=service, options=options)
-		except Exception as e2:
-			errors.append(f'profile={profile}, service=selenium_manager, error={e2}')
-
-	detail = '\n'.join(errors)
-	raise RuntimeError(f'Chrome 啟動失敗。\n{detail}\nChromeDriver log: {chrome_log_path}')
+@dataclass
+class BrowserSession:
+	playwright: object
+	browser: object
+	context: object
 
 
-def build_chrome_options(profile='stable_pipe'):
-	options = Options()
-	options.add_argument('--start-maximized')
-	options.add_argument('--no-first-run')
-	options.add_argument('--no-default-browser-check')
-	options.add_argument('--disable-blink-features=AutomationControlled')
-
-	# 固定用專用 profile，與使用者平常的 Chrome 完全分開，不需關閉既有 Chrome。
-	# 重複使用同一目錄可避免每次啟動都跑「首次設定」，較穩定。
-	user_data_dir = os.path.join(tempfile.gettempdir(), 'poe-sniper-profile')
-	options.add_argument(f'--user-data-dir={user_data_dir}')
-
-	if profile == 'stable_pipe':
-		options.add_argument('--remote-debugging-pipe')
-		options.add_argument('--disable-gpu')
-		options.add_argument('--disable-extensions')
-		options.add_argument('--disable-features=RendererCodeIntegrity')
-	elif profile == 'safe_port':
-		options.add_argument('--remote-allow-origins=*')
-		options.add_argument('--remote-debugging-port=0')
-		options.add_argument('--no-sandbox')
-		options.add_argument('--disable-dev-shm-usage')
-		options.add_argument('--disable-gpu')
-		options.add_argument('--disable-software-rasterizer')
-		options.add_argument('--disable-extensions')
-	elif profile == 'minimal':
-		options.add_argument('--remote-allow-origins=*')
-		options.add_argument('--remote-debugging-port=0')
-		options.add_argument('--no-sandbox')
-		options.add_argument('--disable-dev-shm-usage')
-
-	options.add_experimental_option('excludeSwitches', ['enable-automation'])
-
-	chrome_binary = resolve_chrome_binary()
-	if chrome_binary:
-		options.binary_location = chrome_binary
-
-	return options
-
-
-def resolve_chrome_binary():
-	env_binary = os.environ.get('CHROME_BINARY')
-	if env_binary and os.path.exists(env_binary):
-		return env_binary
-
-	system_name = platform.system().lower()
-	candidates = []
-
-	if system_name == 'windows':
-		candidates = [
-			r'C:\Program Files\Google\Chrome\Application\chrome.exe',
-			r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
-		]
-	elif system_name == 'darwin':
-		candidates = [
-			'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-		]
-	else:
-		candidates = [
-			'/usr/bin/google-chrome',
-			'/usr/bin/google-chrome-stable',
-		]
-
-	for path in candidates:
-		if os.path.exists(path):
-			return path
-
-	return None
-
-
-def make_service_with_webdriver_manager(chrome_log_path):
-	driver_path = ChromeDriverManager().install()
+def create_driver(headless=True):
 	try:
-		return Service(executable_path=driver_path, log_output=chrome_log_path)
-	except TypeError:
-		return Service(executable_path=driver_path)
+		playwright = sync_playwright().start()
+		browser = playwright.chromium.launch(
+			channel='chrome',
+			headless=headless,
+			args=[
+				'--disable-blink-features=AutomationControlled',
+				'--no-default-browser-check',
+				'--no-first-run',
+			],
+		)
+		context = browser.new_context(
+			viewport={
+				'width': 1440,
+				'height': 900,
+			},
+			ignore_https_errors=True,
+		)
+		return BrowserSession(
+			playwright=playwright,
+			browser=browser,
+			context=context,
+		)
+	except Exception as e:
+		raise RuntimeError(f'Playwright 啟動失敗：{e}')
 
 
-def make_service_with_selenium_manager(chrome_log_path):
+def is_session_alive(session):
+	if session is None:
+		return False
 	try:
-		return Service(log_output=chrome_log_path)
-	except TypeError:
-		return Service()
+		return session.browser.is_connected()
+	except Exception:
+		return False
 
 
-def open_urls(driver, url_list, delay=0.5):
+def get_pages(session):
+	if session is None:
+		return []
+	try:
+		return list(session.context.pages)
+	except Exception:
+		return []
+
+
+def open_urls(session, url_list, delay=0.5):
 	if not url_list:
 		return
 
-	# 直接用現有的第一個分頁載入第一個 URL，避免留下 data:, 的空白分頁
-	driver.get(url_list[0])
-	time.sleep(delay)
-
-	for url in url_list[1:]:
-		driver.execute_script(f"window.open('{url}', '_blank');")
-		time.sleep(delay)
-
-	if driver.window_handles:
-		driver.switch_to.window(driver.window_handles[0])
-
-
-def refresh_tabs(driver, url_list, delay=0.3):
-	handles = list(driver.window_handles)
-	if not handles:
-		return
-	driver.switch_to.window(handles[0])
-	for handle in handles[1:]:
+	close_all_pages(session)
+	for index, url in enumerate(url_list):
+		page = session.context.new_page()
 		try:
-			driver.switch_to.window(handle)
-			driver.close()
+			page.goto(url, wait_until='domcontentloaded', timeout=15000)
+		except PlaywrightTimeoutError:
+			pass
 		except Exception:
 			pass
-	if driver.window_handles:
-		driver.switch_to.window(driver.window_handles[0])
-	for url in url_list:
-		driver.execute_script(f"window.open('{url}', '_blank');")
-		time.sleep(delay)
-	if driver.window_handles:
-		driver.switch_to.window(driver.window_handles[0])
+		if index == 0:
+			try:
+				page.bring_to_front()
+			except Exception:
+				pass
 
 
-def quit_driver(driver):
-	if driver is None:
+def refresh_tabs(session, url_list, delay=0.3):
+	open_urls(session, url_list, delay=delay)
+
+
+def close_all_pages(session):
+	for page in get_pages(session):
+		try:
+			page.close()
+		except Exception:
+			pass
+
+
+def quit_driver(session):
+	if session is None:
 		return
 	try:
-		driver.quit()
+		session.context.close()
+	except Exception:
+		pass
+	try:
+		session.browser.close()
+	except Exception:
+		pass
+	try:
+		session.playwright.stop()
 	except Exception:
 		pass
 
 
-def apply_poe_sessid(driver, sessid):
-	if driver is None or not sessid:
+def apply_poe_sessid(session, sessid):
+	if session is None or not sessid:
 		return
 	try:
-		driver.get('https://pathofexile.tw')
-		driver.add_cookie({
+		session.context.add_cookies([{
 			'name': 'POESESSID',
 			'value': sessid,
 			'domain': 'pathofexile.tw',
 			'path': '/',
-		})
+			'httpOnly': True,
+			'secure': True,
+		}])
 	except Exception:
 		# 失敗就當沒登入，不影響後續流程
 		pass
